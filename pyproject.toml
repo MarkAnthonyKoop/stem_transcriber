@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stem_transcriber"
+version = "0.1.0"
+description = "Single-stem MP3 → MIDI (basic-pitch) + sheet PDF + MusicXML + ASCII tab + per-note TSV."
+requires-python = ">=3.10"
+dependencies = [
+    "basic-pitch",
+    "music21",
+]
+
+[tool.setuptools]
+packages = ["stem_transcriber"]
+
+[tool.setuptools.package-dir]
+"stem_transcriber" = "."
