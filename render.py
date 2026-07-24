@@ -1,64 +1,69 @@
-r"""MIDI/MusicXML → PDF / MusicXML, via MuseScore 3 CLI on the Windows side.
+r"""MIDI/MusicXML → PDF / MusicXML, via the MuseScore CLI.
 
-Two gotchas this module hides:
+macOS-native (rewritten 2026-07-16). The original targeted MuseScore 3 on the
+Windows side from WSL and had to shuttle inputs through a Windows temp dir
+because MuseScore refused UNC paths. On macOS MuseScore reads local files
+directly, so `_convert` is a plain subprocess call.
 
-1. MuseScore on Windows reliably refuses to read files via the
-   `\\wsl.localhost\Ubuntu\...` UNC path when the input is non-trivial. It
-   silently exits without producing output. So we ALWAYS shuttle the input
-   through `C:\Users\x\AppData\Local\Temp\` first, then copy the result back
-   to the WSL-side destination.
+One gotcha this module still hides:
 
-2. music21's MusicXML output of unquantized basic-pitch MIDI causes MuseScore
-   to choke (1000s of tied 32nd-note tuplets). MuseScore's own MIDI importer
-   is much smarter — so we let MuseScore do MIDI → MusicXML when we want XML.
+- music21's MusicXML output of unquantized basic-pitch MIDI causes MuseScore
+  to choke (1000s of tied 32nd-note tuplets). MuseScore's own MIDI importer
+  is much smarter — so we let MuseScore do MIDI → MusicXML when we want XML.
 
-Why MuseScore 3, not 4? Already installed at the path below. MuseScore 4 would
-also work; probe both and use whichever exists when we add it.
+We probe for MuseScore 4 first, then 3, then a bare `mscore`/`musescore` on
+PATH. Set MUSESCORE_EXE to override.
 """
 from __future__ import annotations
+import os
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
-_MUSESCORE_EXE = "/mnt/c/Program Files/MuseScore 3/bin/MuseScore3.exe"
-_WIN_TMP_WSL = Path("/mnt/c/Users/x/AppData/Local/Temp")
+# Candidate MuseScore CLI binaries, most-preferred first. macOS app bundles
+# expose the CLI as .../Contents/MacOS/mscore.
+_CANDIDATES = [
+    os.environ.get("MUSESCORE_EXE", ""),
+    "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
+    "/Applications/MuseScore 3.app/Contents/MacOS/mscore",
+    shutil.which("mscore") or "",
+    shutil.which("musescore") or "",
+]
 
-# Crash-reporter starts on the Windows side too; we tolerate that and give MuseScore
-# a generous timeout because launching it cold (first run after boot) takes ~10s.
+# Launching MuseScore cold (first run after boot) can take ~10s; conversions of
+# dense basic-pitch MIDI are heavier still.
 _DEFAULT_TIMEOUT_S = 180
 
 
-def _wslpath_w(p: str | Path) -> str:
-    return subprocess.check_output(["wslpath", "-w", str(p)], text=True).strip()
+def _musescore_exe() -> str:
+    for c in _CANDIDATES:
+        if c and Path(c).exists():
+            return c
+    raise RuntimeError(
+        "MuseScore not found. Install with `brew install --cask musescore` "
+        "or set MUSESCORE_EXE to the CLI binary "
+        "(…/MuseScore 4.app/Contents/MacOS/mscore)."
+    )
 
 
 def _convert(src: str | Path, dst: str | Path, timeout_s: int) -> Path:
-    """MuseScore3 -o dst src, shuttled through the Windows-side temp dir."""
-    if not Path(_MUSESCORE_EXE).exists():
-        raise RuntimeError(f"MuseScore 3 not found at {_MUSESCORE_EXE}")
-    src = Path(src); dst = Path(dst)
+    """`mscore -o dst src` — MuseScore infers both formats from the extensions."""
+    exe = _musescore_exe()
+    src = Path(src)
+    dst = Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    _WIN_TMP_WSL.mkdir(parents=True, exist_ok=True)
 
-    tag = f"{int(time.time()*1000)}_{src.stem}"
-    win_in = _WIN_TMP_WSL / f"{tag}{src.suffix}"
-    win_out = _WIN_TMP_WSL / f"{tag}{dst.suffix}"
-    try:
-        shutil.copyfile(src, win_in)
-        cmd = [_MUSESCORE_EXE, "-o", _wslpath_w(win_out), _wslpath_w(win_in)]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
-        if not win_out.exists():
-            raise RuntimeError(
-                f"MuseScore did not produce {dst.suffix} (rc={p.returncode})\n"
-                f"stdout: {p.stdout[-500:]}\nstderr: {p.stderr[-500:]}"
-            )
-        shutil.copyfile(win_out, dst)
-        return dst
-    finally:
-        for f in (win_in, win_out):
-            try: f.unlink()
-            except FileNotFoundError: pass
+    cmd = [exe, "-o", str(dst), str(src)]
+    # MuseScore 4's macOS bundle ships only the "cocoa" Qt platform plugin, so we
+    # do NOT force QT_QPA_PLATFORM=offscreen (that aborts with SIGABRT). Batch
+    # export via -o runs fine under cocoa without a visible window.
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    if not dst.exists():
+        raise RuntimeError(
+            f"MuseScore did not produce {dst.suffix} (rc={p.returncode})\n"
+            f"stdout: {p.stdout[-500:]}\nstderr: {p.stderr[-500:]}"
+        )
+    return dst
 
 
 def midi_to_pdf(midi_path: str | Path, pdf_path: str | Path,

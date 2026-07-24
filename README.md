@@ -8,17 +8,24 @@ A sibling project under `~/claude/`. Knows nothing about Suno, YouTube, or stem-
 
 ## 1. User manual
 
-Install once (assumes Python 3.11, pip in `--user` mode, MuseScore 3 already on Windows):
+Install once. On **macOS** (this Mac, set up 2026-07-16) use a dedicated Python 3.11 venv and
+MuseScore 4 from Homebrew:
 
 ```bash
-pip install --user 'basic-pitch[onnx]' music21
-# MuseScore 3 must be installed at: '/mnt/c/Program Files/MuseScore 3/bin/MuseScore3.exe'
+cd ~/claude/stem_transcriber
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python 'basic-pitch[onnx]' music21 'setuptools<81'
+brew install --cask musescore          # → /Applications/MuseScore 4.app
 ```
 
-Transcribe one stem:
+(The `setuptools<81` pin is required — basic-pitch's resampy still imports the removed
+`pkg_resources`. `render.py` auto-finds MuseScore 4; override with `MUSESCORE_EXE`.)
+
+Transcribe one stem (any format basic-pitch reads — mp3/wav/flac/m4a):
 
 ```bash
-python3 -m stem_transcriber transcribe /mnt/d/downloads/suno_stems/fog/fog_guitar.mp3
+PYTHONPATH=~/claude ~/claude/stem_transcriber/.venv/bin/python \
+    -m stem_transcriber transcribe stems/song_guitar.wav --out transcribed
 ```
 
 Outputs land in `<audio_dir>/transcribed/<stem>.{mid,musicxml,pdf,tab,_notes.tsv,_summary.json}` by default. Override with `--out DIR`. Force an instrument label with `--instrument guitar|bass|vocals|drums|...` (otherwise inferred from filename). The `.tab` ASCII tablature is only generated for guitar and bass stems.
